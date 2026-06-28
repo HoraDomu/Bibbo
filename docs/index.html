@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bibbo — Your knowledge, connected</title>
+  <meta name="description" content="A native desktop knowledge graph. Write nodes. Connections emerge." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #040406;
+      --text:     #e8e7ed;
+      --dim:      #65627a;
+      --dimmer:   #2e2c3a;
+      --accent:   #a0afc8;
+      --node:     rgba(225, 224, 228, 0.32);
+      --line:     rgba(225, 224, 228, 0.09);
+      --max-w:    680px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.75;
+      overflow-x: hidden;
+    }
+
+    /* ── Canvas background ─────────────────────────────────────────── */
+    #bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* ── Layout ────────────────────────────────────────────────────── */
+    .page { position: relative; z-index: 1; }
+
+    section {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 28px;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--dimmer);
+      margin: 72px auto;
+      max-width: var(--max-w);
+    }
+
+    /* ── Hero ──────────────────────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 0 28px;
+      max-width: 100%;
+    }
+
+    .hero-wordmark {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: clamp(72px, 14vw, 130px);
+      font-weight: bold;
+      letter-spacing: -3px;
+      color: #eeedf3;
+      line-height: 1;
+      margin-bottom: 18px;
+    }
+
+    .hero-sub {
+      font-size: 13px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: 52px;
+    }
+
+    .download-group {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 11px 26px;
+      border: 1px solid rgba(225,224,228,0.18);
+      border-radius: 6px;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .btn:hover { border-color: rgba(225,224,228,0.5); color: #fff; }
+    .btn.primary {
+      background: rgba(225,224,228,0.07);
+      border-color: rgba(225,224,228,0.25);
+    }
+
+    .scroll-hint {
+      position: absolute;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--dimmer);
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      animation: pulse 2.8s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:0.4} 50%{opacity:0.9} }
+
+    /* ── Sections ──────────────────────────────────────────────────── */
+    h2 {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 26px;
+      font-weight: normal;
+      color: #d8d7e2;
+      margin-bottom: 28px;
+      letter-spacing: -0.5px;
+    }
+
+    p { color: #9e9baf; margin-bottom: 18px; }
+    p:last-child { margin-bottom: 0; }
+
+    strong { color: #cac9d6; font-weight: 600; }
+    em { color: #b0adc0; font-style: italic; }
+    code {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 13px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+      padding: 1px 6px;
+      border-radius: 4px;
+      color: #c8c5d8;
+    }
+
+    /* ── VS section ────────────────────────────────────────────────── */
+    .vs-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .vs-item strong {
+      display: block;
+      color: #d0cedd;
+      margin-bottom: 6px;
+      font-size: 15px;
+    }
+
+    .vs-item p { margin: 0; }
+
+    /* ── Install ───────────────────────────────────────────────────── */
+    .platform-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 24px;
+    }
+
+    .tab {
+      padding: 7px 16px;
+      border: 1px solid var(--dimmer);
+      border-radius: 5px;
+      background: none;
+      color: var(--dim);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+    .tab.active, .tab:hover {
+      border-color: rgba(225,224,228,0.3);
+      color: var(--text);
+      background: rgba(225,224,228,0.05);
+    }
+
+    .platform-content { display: none; }
+    .platform-content.active { display: block; }
+
+    ol { padding-left: 20px; color: #9e9baf; }
+    ol li { margin-bottom: 8px; }
+
+    pre {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--dimmer);
+      border-radius: 6px;
+      padding: 14px 18px;
+      margin: 14px 0;
+      overflow-x: auto;
+    }
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      font-size: 13px;
+      color: #b8b5cc;
+    }
+
+    .data-note {
+      margin-top: 24px;
+      padding: 14px 18px;
+      border: 1px solid var(--dimmer);
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--dim);
+    }
+    .data-note strong { color: #8a8798; display: block; margin-bottom: 6px; }
+
+    /* ── Keybinds ──────────────────────────────────────────────────── */
+    .keybind-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px 40px;
+    }
+
+    .keybind-group h3 {
+      font-size: 10px;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: var(--dimmer);
+      margin-bottom: 14px;
+    }
+
+    .keybind-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      gap: 12px;
+    }
+    .keybind-row:last-child { border-bottom: none; }
+
+    .key {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      color: #d0cedd;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .keybind-desc { font-size: 13px; color: var(--dim); text-align: right; }
+
+    /* ── Footer ────────────────────────────────────────────────────── */
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 28px 60px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--dimmer);
+    }
+
+    footer a { color: var(--dimmer); text-decoration: none; }
+    footer a:hover { color: var(--dim); }
+
+    @media (max-width: 600px) {
+      .keybind-grid { grid-template-columns: 1fr; }
+      footer { flex-direction: column; gap: 8px; text-align: center; }
+      .platform-tabs { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="bg"></canvas>
+
+<div class="page">
+
+  <!-- ── Hero ──────────────────────────────────────────────────────── -->
+  <div class="hero" style="position:relative">
+    <div class="hero-wordmark">Bibbo</div>
+    <div class="hero-sub">Your knowledge, connected</div>
+    <div class="download-group">
+      <a class="btn primary" href="https://github.com/dommc/Bibbo/releases/latest">Download</a>
+      <a class="btn" href="https://github.com/dommc/Bibbo">GitHub</a>
+    </div>
+    <div class="scroll-hint">scroll</div>
+  </div>
+
+  <hr />
+
+  <!-- ── Why it works ──────────────────────────────────────────────── -->
+  <section>
+    <h2>Why this works</h2>
+    <p>Your brain doesn't store knowledge in lists — it stores it in <strong>connections</strong>. When you link two ideas together you're not just filing them away, you're making a claim about <em>why</em> they relate. The more paths that lead to a concept, the deeper your understanding of it becomes.</p>
+    <p>Most note-taking tools fight this. Folders create silos. Lists hide relationships. Bullet points flatten what is inherently dimensional.</p>
+    <p>Bibbo is built around the structure of thought itself. Every <code>[[link]]</code> you write forces you to ask: <em>how does this connect to what I already know?</em> Over time your graph becomes a map of your understanding — and the gaps in it show you exactly where to go next. The nodes that grow largest are the ones your thinking keeps returning to. The isolated ones are the ideas you haven't fully integrated yet.</p>
+    <p>This is why traversing a knowledge graph is a fundamentally different experience than reading your old notes. You're not reviewing what you wrote — you're exploring what you understand.</p>
+  </section>
+
+  <hr />
+
+  <!-- ── Why over Obsidian ──────────────────────────────────────────── -->
+  <section>
+    <h2>Why Bibbo over Obsidian?</h2>
+    <p style="margin-bottom:36px">Obsidian is a great piece of software. Bibbo is a different kind of tool.</p>
+    <div class="vs-grid">
+      <div class="vs-item">
+        <strong>Obsidian is a platform. Bibbo is a single focused experience.</strong>
+        <p>Obsidian ships with a plugin ecosystem, themes, canvas, and dozens of views. That flexibility comes with a cost — you spend real time configuring it. Bibbo has no configuration. You open it and think.</p>
+      </div>
+      <div class="vs-item">
+        <strong>In Obsidian, the graph is a feature. In Bibbo, the graph is the app.</strong>
+        <p>Obsidian's graph view is something you occasionally open to admire. It's decorative. In Bibbo, you write <em>into</em> the graph. Every new node appears in it. The graph isn't a visualization of your notes — it is your notes.</p>
+      </div>
+      <div class="vs-item">
+        <strong>Bibbo's graph is alive.</strong>
+        <p>Obsidian's graph is static — nodes sit in fixed positions and don't respond. Bibbo uses physics-based simulation: nodes repel, spring toward their connections, and settle into organic arrangements. Drag a node and the whole network shifts. It feels like a brain, not a diagram.</p>
+      </div>
+      <div class="vs-item">
+        <strong>No folders. No hierarchy. No decisions.</strong>
+        <p>Obsidian still nudges you toward folders and structure. Bibbo has none. There is one graph. Everything lives in it. The only structure is the one that emerges from your thinking.</p>
+      </div>
+      <div class="vs-item">
+        <strong>Native, not Electron.</strong>
+        <p>Obsidian ships a full browser engine and weighs over 200MB. Bibbo is a single native binary under 10MB, built in Rust. It opens instantly and never slows down.</p>
+      </div>
+      <div class="vs-item">
+        <strong>The goal is different.</strong>
+        <p>Obsidian is built to store everything. Bibbo is built to help you <em>understand</em> things better. Every design decision — the physics, the local graph, the writing mode, the way connections form automatically — exists to answer one question: <em>does this help you think more clearly?</em></p>
+      </div>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ── Install ────────────────────────────────────────────────────── -->
+  <section>
+    <h2>Installation</h2>
+    <div class="platform-tabs">
+      <button class="tab active" onclick="showPlatform('mac-arm')">Mac (M1/M2/M3)</button>
+      <button class="tab" onclick="showPlatform('mac-intel')">Mac (Intel)</button>
+      <button class="tab" onclick="showPlatform('windows')">Windows</button>
+      <button class="tab" onclick="showPlatform('linux')">Linux</button>
+    </div>
+
+    <div id="mac-arm" class="platform-content active">
+      <ol>
+        <li>Download <code>bibbo-mac-arm64</code> from <a href="https://github.com/dommc/Bibbo/releases/latest" style="color:var(--accent)">the latest release</a></li>
+        <li>Right-click the file in Finder → <strong>Open</strong> → <strong>Open</strong><br/><span style="color:var(--dim);font-size:13px">Required the first time to bypass Gatekeeper</span></li>
+        <li>If blocked, go to <strong>System Settings → Privacy &amp; Security</strong> → click <strong>Open Anyway</strong></li>
+      </ol>
+      <p style="margin-top:16px;font-size:13px;color:var(--dim)">Or via Terminal:</p>
+      <pre><code>chmod +x ~/Downloads/bibbo-mac-arm64
+~/Downloads/bibbo-mac-arm64</code></pre>
+    </div>
+
+    <div id="mac-intel" class="platform-content">
+      <ol>
+        <li>Download <code>bibbo-mac-intel</code> from <a href="https://github.com/dommc/Bibbo/releases/latest" style="color:var(--accent)">the latest release</a></li>
+        <li>Right-click the file in Finder → <strong>Open</strong> → <strong>Open</strong></li>
+        <li>If blocked, go to <strong>System Settings → Privacy &amp; Security</strong> → click <strong>Open Anyway</strong></li>
+      </ol>
+      <pre><code>chmod +x ~/Downloads/bibbo-mac-intel
+~/Downloads/bibbo-mac-intel</code></pre>
+    </div>
+
+    <div id="windows" class="platform-content">
+      <ol>
+        <li>Download <code>bibbo-windows.exe</code> from <a href="https://github.com/dommc/Bibbo/releases/latest" style="color:var(--accent)">the latest release</a></li>
+        <li>Double-click to run — no installation needed</li>
+        <li>If Windows Defender shows a warning, click <strong>More info → Run anyway</strong></li>
+      </ol>
+    </div>
+
+    <div id="linux" class="platform-content">
+      <ol>
+        <li>Download <code>bibbo-linux</code> from <a href="https://github.com/dommc/Bibbo/releases/latest" style="color:var(--accent)">the latest release</a></li>
+      </ol>
+      <pre><code>chmod +x ~/Downloads/bibbo-linux
+~/Downloads/bibbo-linux</code></pre>
+    </div>
+
+    <div class="data-note">
+      <strong>Your data stays local</strong>
+      Windows: <code>%APPDATA%\Bibbo\bibbo.db</code> &nbsp;·&nbsp;
+      macOS: <code>~/Library/Application Support/Bibbo/bibbo.db</code> &nbsp;·&nbsp;
+      Linux: <code>~/.local/share/Bibbo/bibbo.db</code>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ── Keybinds ───────────────────────────────────────────────────── -->
+  <section>
+    <h2>Quickstart</h2>
+    <div class="keybind-grid">
+      <div class="keybind-group">
+        <h3>Writing</h3>
+        <div class="keybind-row"><span class="key">Ctrl + N</span><span class="keybind-desc">new node</span></div>
+        <div class="keybind-row"><span class="key">[[Title]]</span><span class="keybind-desc">link to a node</span></div>
+        <div class="keybind-row"><span class="key">Esc</span><span class="keybind-desc">save &amp; return</span></div>
+      </div>
+      <div class="keybind-group">
+        <h3>Graph</h3>
+        <div class="keybind-row"><span class="key">Click node</span><span class="keybind-desc">enter local view</span></div>
+        <div class="keybind-row"><span class="key">Click again</span><span class="keybind-desc">open writing mode</span></div>
+        <div class="keybind-row"><span class="key">Click neighbor</span><span class="keybind-desc">expand web</span></div>
+        <div class="keybind-row"><span class="key">Click edge</span><span class="keybind-desc">see why connected</span></div>
+      </div>
+      <div class="keybind-group">
+        <h3>Navigate</h3>
+        <div class="keybind-row"><span class="key">Ctrl + K</span><span class="keybind-desc">search</span></div>
+        <div class="keybind-row"><span class="key">Scroll</span><span class="keybind-desc">zoom</span></div>
+        <div class="keybind-row"><span class="key">Drag</span><span class="keybind-desc">pan canvas</span></div>
+        <div class="keybind-row"><span class="key">Esc</span><span class="keybind-desc">back / close</span></div>
+      </div>
+      <div class="keybind-group">
+        <h3>Data</h3>
+        <div class="keybind-row"><span class="key">Ctrl + E</span><span class="keybind-desc">export .md files</span></div>
+        <div class="keybind-row"><span class="key">Ctrl + I</span><span class="keybind-desc">import .md folder</span></div>
+        <div class="keybind-row"><span class="key">Ctrl + H</span><span class="keybind-desc">help</span></div>
+      </div>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- ── Footer ────────────────────────────────────────────────────── -->
+  <footer>
+    <span>© 2026 Bibbo. Free to use, source not open.</span>
+    <span>Rust · egui · SQLite</span>
+  </footer>
+
+</div>
+
+<script>
+  // ── Canvas node animation ──────────────────────────────────────────
+  const canvas = document.getElementById('bg');
+  const ctx    = canvas.getContext('2d');
+
+  const NODE_COUNT = 60;
+  const MAX_DIST   = 190;
+  const SPEED      = 0.28;
+
+  let nodes = [];
+  let W, H;
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+
+  function init() {
+    resize();
+    nodes = Array.from({ length: NODE_COUNT }, (_, i) => {
+      const seed = (i + 1) * 1664525 + 1013904223;
+      return {
+        x:  (seed         & 0xFFFF) / 0xFFFF * W,
+        y:  ((seed >> 8)  & 0xFFFF) / 0xFFFF * H,
+        vx: ((seed >> 16) & 0xFF)   / 255 * SPEED * 2 - SPEED,
+        vy: ((seed >> 24) & 0xFF)   / 255 * SPEED * 2 - SPEED,
+        r:  ((seed >> 12) & 0xFF)   / 255 * 2.5 + 1.5,
+      };
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    for (const n of nodes) {
+      n.x += n.vx;
+      n.y += n.vy;
+      if (n.x < 0)  { n.x = 0;  n.vx *= -1; }
+      if (n.x > W)  { n.x = W;  n.vx *= -1; }
+      if (n.y < 0)  { n.y = 0;  n.vy *= -1; }
+      if (n.y > H)  { n.y = H;  n.vy *= -1; }
+    }
+
+    // Edges
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const dx = nodes[i].x - nodes[j].x;
+        const dy = nodes[i].y - nodes[j].y;
+        const d  = Math.sqrt(dx * dx + dy * dy);
+        if (d < MAX_DIST) {
+          ctx.beginPath();
+          ctx.moveTo(nodes[i].x, nodes[i].y);
+          ctx.lineTo(nodes[j].x, nodes[j].y);
+          ctx.strokeStyle = `rgba(225,224,228,${(1 - d / MAX_DIST) * 0.10})`;
+          ctx.lineWidth = 0.7;
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Nodes
+    for (const n of nodes) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(225,224,228,0.30)';
+      ctx.fill();
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  window.addEventListener('resize', () => { resize(); });
+  init();
+  draw();
+
+  // ── Platform tabs ─────────────────────────────────────────────────
+  function showPlatform(id) {
+    document.querySelectorAll('.platform-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    event.target.classList.add('active');
+  }
+</script>
+
+</body>
+</html>

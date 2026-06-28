@@ -28,12 +28,15 @@ fn main() -> eframe::Result {
 
 // ── Node ─────────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 struct Node {
     id: i64,
     title: String,
+    body: String,
     color: egui::Color32,
     pos: egui::Pos2,
+    vel: egui::Vec2,
+    dragging: bool,
+    dirty: bool,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -84,6 +87,8 @@ struct BibboApp {
     draft_title: String,
     draft_body: String,
     color_idx: usize,
+    editing_id: Option<i64>, // Some = editing existing node, None = new node
+    press_origin: egui::Pos2, // where the current press started (for click vs drag)
 }
 
 impl BibboApp {
@@ -119,30 +124,70 @@ impl BibboApp {
             draft_title: String::new(),
             draft_body: String::new(),
             color_idx,
+            editing_id: None,
+            press_origin: egui::Pos2::ZERO,
         }
     }
 
     fn commit_node(&mut self) {
         let title = self.draft_title.trim().to_string();
         let body = std::mem::take(&mut self.draft_body);
-        let ci = self.color_idx;
-        self.color_idx = (ci + 1) % COLORS.len();
-        let pos = spawn_pos(self.nodes.len(), self.canvas);
 
-        let _ = self.db.execute(
-            "INSERT INTO nodes (title,body,color_idx,pos_x,pos_y,created) VALUES(?1,?2,?3,?4,?5,?6)",
-            rusqlite::params![title, body, ci as i64, pos.x as f64, pos.y as f64, date_string()],
-        );
-        let id = self.db.last_insert_rowid();
-
-        self.nodes.push(Node { id, title, color: COLORS[ci], pos });
+        if let Some(id) = self.editing_id.take() {
+            // Update existing node
+            let _ = self.db.execute(
+                "UPDATE nodes SET title=?1, body=?2 WHERE id=?3",
+                rusqlite::params![title, body, id],
+            );
+            if let Some(node) = self.nodes.iter_mut().find(|n| n.id == id) {
+                node.title = title;
+                node.body = body;
+            }
+        } else {
+            // Create new node
+            let ci = self.color_idx;
+            self.color_idx = (ci + 1) % COLORS.len();
+            let pos = spawn_pos(self.nodes.len(), self.canvas);
+            let _ = self.db.execute(
+                "INSERT INTO nodes (title,body,color_idx,pos_x,pos_y,created) VALUES(?1,?2,?3,?4,?5,?6)",
+                rusqlite::params![title, body, ci as i64, pos.x as f64, pos.y as f64, date_string()],
+            );
+            let id = self.db.last_insert_rowid();
+            self.nodes.push(Node {
+                id,
+                title,
+                body,
+                color: COLORS[ci],
+                pos,
+                vel: egui::Vec2::ZERO,
+                dragging: false,
+                dirty: false,
+            });
+        }
         self.modal = false;
+    }
+
+    fn save_position(&self, id: i64, pos: egui::Pos2) {
+        let _ = self.db.execute(
+            "UPDATE nodes SET pos_x=?1, pos_y=?2 WHERE id=?3",
+            rusqlite::params![pos.x as f64, pos.y as f64, id],
+        );
+    }
+
+    fn open_edit(&mut self, id: i64) {
+        if let Some(node) = self.nodes.iter().find(|n| n.id == id) {
+            self.draft_title = node.title.clone();
+            self.draft_body = node.body.clone();
+            self.editing_id = Some(id);
+            self.modal = true;
+            self.focus_title = false; // focus body for editing
+        }
     }
 }
 
 fn load_nodes(db: &Connection) -> Vec<Node> {
     let Ok(mut s) =
-        db.prepare("SELECT id, title, color_idx, pos_x, pos_y FROM nodes ORDER BY id")
+        db.prepare("SELECT id, title, body, color_idx, pos_x, pos_y FROM nodes ORDER BY id")
     else {
         return vec![];
     };
@@ -150,19 +195,24 @@ fn load_nodes(db: &Connection) -> Vec<Node> {
         Ok((
             r.get::<_, i64>(0)?,
             r.get::<_, String>(1)?,
-            r.get::<_, i64>(2)? as usize,
-            r.get::<_, f64>(3)? as f32,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)? as usize,
             r.get::<_, f64>(4)? as f32,
+            r.get::<_, f64>(5)? as f32,
         ))
     }) else {
         return vec![];
     };
     rows.filter_map(|r| r.ok())
-        .map(|(id, title, ci, x, y)| Node {
+        .map(|(id, title, body, ci, x, y)| Node {
             id,
             title,
+            body,
             color: COLORS[ci % COLORS.len()],
             pos: egui::pos2(x, y),
+            vel: egui::Vec2::ZERO,
+            dragging: false,
+            dirty: false,
         })
         .collect()
 }
@@ -171,12 +221,98 @@ fn load_nodes(db: &Connection) -> Vec<Node> {
 
 impl eframe::App for BibboApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Ctrl+N opens modal
+        // Ctrl+N — new node
         if ctx.input(|i| i.key_pressed(egui::Key::N) && i.modifiers.ctrl) && !self.modal {
+            self.editing_id = None;
             self.modal = true;
             self.focus_title = true;
             self.draft_title.clear();
             self.draft_body.clear();
+        }
+
+        let dt = ctx.input(|i| i.unstable_dt).min(0.05);
+        let (primary_down, primary_pressed, pointer_pos) =
+            ctx.input(|i| (i.pointer.primary_down(), i.pointer.primary_pressed(), i.pointer.interact_pos()));
+
+        // Start drag / click detection
+        if primary_pressed && !self.modal {
+            if let Some(pp) = pointer_pos {
+                if let Some(idx) = self.nodes.iter().rposition(|n| (n.pos - pp).length() < 15.0) {
+                    self.nodes[idx].dragging = true;
+                    self.press_origin = pp;
+                }
+            }
+        }
+
+        // Repulsion forces
+        const MIN_DIST: f32 = 45.0;
+        const REPULSION: f32 = 250.0;
+        let n = self.nodes.len();
+        let mut forces = vec![egui::Vec2::ZERO; n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let delta = self.nodes[i].pos - self.nodes[j].pos;
+                let dist = delta.length();
+                if dist < MIN_DIST && dist > 0.5 {
+                    let strength = REPULSION * (1.0 - dist / MIN_DIST);
+                    let dir = delta / dist;
+                    forces[i] += dir * strength;
+                    forces[j] -= dir * strength;
+                }
+            }
+        }
+
+        // Physics + click detection on release
+        let mut to_save: Option<(i64, egui::Pos2)> = None;
+        let mut any_active = false;
+        let mut clicked_id: Option<i64> = None;
+
+        for (i, node) in self.nodes.iter_mut().enumerate() {
+            if node.dragging {
+                if primary_down {
+                    let old = node.pos;
+                    if let Some(pp) = pointer_pos {
+                        node.pos = pp;
+                    }
+                    let frame_vel = if dt > 0.0 { (node.pos - old) / dt } else { egui::Vec2::ZERO };
+                    node.vel = node.vel * 0.6 + frame_vel * 0.4;
+                } else {
+                    node.dragging = false;
+                    let moved = pointer_pos
+                        .map(|pp| (pp - self.press_origin).length())
+                        .unwrap_or(0.0);
+                    if moved < 6.0 {
+                        // click — open editor
+                        clicked_id = Some(node.id);
+                    } else {
+                        node.dirty = true;
+                    }
+                }
+                any_active = true;
+            } else {
+                node.vel += forces[i] * dt;
+                if node.vel.length_sq() > 0.05 {
+                    node.pos += node.vel * dt;
+                    node.vel *= 1.0 - 8.0 * dt;
+                    any_active = true;
+                } else if node.dirty {
+                    node.vel = egui::Vec2::ZERO;
+                    node.dirty = false;
+                    to_save = Some((node.id, node.pos));
+                }
+            }
+        }
+
+        if let Some((id, pos)) = to_save {
+            self.save_position(id, pos);
+        }
+        if let Some(id) = clicked_id {
+            self.open_edit(id);
+        }
+
+        let repulsion_active = forces.iter().any(|f| f.length_sq() > 0.1);
+        if any_active || repulsion_active {
+            ctx.request_repaint();
         }
 
         // ── Canvas ──
@@ -200,24 +336,17 @@ impl eframe::App for BibboApp {
                 for n in &self.nodes {
                     let pos = n.pos;
                     let r = 9.0_f32;
-
-                    // subtle outer glow
                     p.circle_filled(
                         pos,
                         r + 3.0,
-                        egui::Color32::from_rgba_unmultiplied(
-                            n.color.r(), n.color.g(), n.color.b(), 30,
-                        ),
+                        egui::Color32::from_rgba_unmultiplied(n.color.r(), n.color.g(), n.color.b(), 30),
                     );
-                    // filled node
                     p.circle_filled(pos, r, n.color);
-                    // crisp inner highlight ring
                     p.circle_stroke(
                         pos,
                         r,
                         egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 50)),
                     );
-                    // label
                     p.text(
                         egui::pos2(pos.x, pos.y + r + 7.0),
                         egui::Align2::CENTER_TOP,
@@ -227,7 +356,6 @@ impl eframe::App for BibboApp {
                     );
                 }
 
-                // dim overlay when modal is open
                 if self.modal {
                     p.rect_filled(
                         rect,
@@ -241,6 +369,7 @@ impl eframe::App for BibboApp {
         if self.modal {
             let mut save = false;
             let mut cancel = false;
+            let editing = self.editing_id.is_some();
 
             egui::Window::new("__bibbo_node__")
                 .title_bar(false)
@@ -289,7 +418,7 @@ impl eframe::App for BibboApp {
                     ui.separator();
                     ui.add_space(10.0);
 
-                    ui.add(
+                    let body_resp = ui.add(
                         egui::TextEdit::multiline(&mut self.draft_body)
                             .hint_text("Start writing...")
                             .font(egui::FontId::proportional(15.0))
@@ -298,6 +427,10 @@ impl eframe::App for BibboApp {
                             .desired_rows(9)
                             .frame(false),
                     );
+                    // When editing, drop focus into the body
+                    if editing && !self.focus_title {
+                        body_resp.request_focus();
+                    }
 
                     ui.add_space(8.0);
                     ui.label(
@@ -318,6 +451,7 @@ impl eframe::App for BibboApp {
                 self.commit_node();
             }
             if cancel {
+                self.editing_id = None;
                 self.modal = false;
             }
         }

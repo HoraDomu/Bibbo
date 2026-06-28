@@ -1,1 +1,22 @@
+# Build output
 /target
+
+# Local database (data lives in %APPDATA%/Bibbo on each machine)
+*.db
+
+# Seeded binaries that might end up in root
+bibbo-windows.exe
+bibbo-mac-arm64
+bibbo-mac-intel
+bibbo-linux
+
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo

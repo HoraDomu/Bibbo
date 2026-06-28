@@ -93,8 +93,9 @@ jobs:
             artifact: target/release/bibbo
             asset: bibbo-mac-arm64
 
-          - os: macos-13
-            artifact: target/release/bibbo
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: target/x86_64-apple-darwin/release/bibbo
             asset: bibbo-mac-intel
 
           - os: ubuntu-latest
@@ -121,8 +122,18 @@ jobs:
             libgl1-mesa-dev \
             pkg-config
 
+      - name: Add cross-compile target
+        if: matrix.target
+        run: rustup target add ${{ matrix.target }}
+
       - name: Build
-        run: cargo build --release --bin bibbo
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release --bin bibbo --target ${{ matrix.target }}
+          else
+            cargo build --release --bin bibbo
+          fi
 
       - name: Stage artifact
         shell: bash

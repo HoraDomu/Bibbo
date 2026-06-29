@@ -47,6 +47,47 @@ public class Database {
                     UNIQUE(source_id, target_id)
                 )
                 """);
+
+            // FTS5 full-text search index (external content — reads from nodes table)
+            s.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts
+                USING fts5(title, body, content='nodes', content_rowid='id')
+                """);
+        }
+
+        // On first setup (no triggers yet) rebuild FTS from existing data
+        boolean triggersExist;
+        try (Statement s = conn.createStatement();
+             ResultSet rs = s.executeQuery(
+                 "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='nodes_ai'")) {
+            triggersExist = rs.getLong(1) > 0;
+        }
+        if (!triggersExist) {
+            try (Statement s = conn.createStatement()) {
+                s.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')");
+            }
+        }
+
+        // Keep FTS in sync automatically (safe to re-create — IF NOT EXISTS)
+        try (Statement s = conn.createStatement()) {
+            s.execute("""
+                CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
+                    INSERT INTO nodes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+                END
+                """);
+            s.execute("""
+                CREATE TRIGGER IF NOT EXISTS nodes_au AFTER UPDATE ON nodes BEGIN
+                    INSERT INTO nodes_fts(nodes_fts, rowid, title, body)
+                        VALUES('delete', old.id, old.title, old.body);
+                    INSERT INTO nodes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+                END
+                """);
+            s.execute("""
+                CREATE TRIGGER IF NOT EXISTS nodes_ad AFTER DELETE ON nodes BEGIN
+                    INSERT INTO nodes_fts(nodes_fts, rowid, title, body)
+                        VALUES('delete', old.id, old.title, old.body);
+                END
+                """);
         }
     }
 
@@ -157,6 +198,22 @@ public class Database {
         try (Statement s = conn.createStatement()) {
             s.execute("DELETE FROM edges");
         }
+    }
+
+    /** FTS5 full-text search — returns node IDs ordered by relevance, up to 20. */
+    public List<Long> searchFTS(String query) throws SQLException {
+        List<Long> ids = new ArrayList<>();
+        String safe = query.replaceAll("[^\\p{L}\\p{N}\\s_-]", " ").trim();
+        if (safe.isEmpty()) return ids;
+        safe = safe + "*";
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ? ORDER BY rank LIMIT 20")) {
+            ps.setString(1, safe);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) ids.add(rs.getLong(1));
+            }
+        }
+        return ids;
     }
 
     public void close() {

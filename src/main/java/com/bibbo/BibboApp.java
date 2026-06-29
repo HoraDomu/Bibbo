@@ -58,6 +58,9 @@ public class BibboApp {
     private Database db;
     private final List<Node> nodes = new ArrayList<>();
     private final List<Edge> edges = new ArrayList<>();
+    private final Map<Long, Node> nodeById    = new HashMap<>();
+    private final Map<String, Long> titleIndex = new HashMap<>();
+    private final Map<String, Set<Long>> tagRefs = new HashMap<>();
 
     // ── Camera ────────────────────────────────────────────────────────────────
     private double panX, panY, panVelX, panVelY;
@@ -149,6 +152,12 @@ public class BibboApp {
             edges.addAll(db.loadEdges());
         } catch (IOException | SQLException e) {
             throw new RuntimeException("Failed to open database", e);
+        }
+        for (Node n : nodes) {
+            nodeById.put(n.id, n);
+            titleIndex.put(Utils.normalize(n.title), n.id);
+            for (String tag : Utils.parseLinks(n.body))
+                tagRefs.computeIfAbsent(Utils.normalize(tag), k -> new HashSet<>()).add(n.id);
         }
         colorIdx = nodes.size() % COLORS.length;
     }
@@ -547,6 +556,12 @@ public class BibboApp {
         } catch (SQLException ex) {
             ex.printStackTrace();
         }
+        Node removed = nodeById.remove(id);
+        if (removed != null) {
+            titleIndex.remove(Utils.normalize(removed.title));
+            for (String tag : Utils.parseLinks(removed.body))
+                tagRefs.getOrDefault(Utils.normalize(tag), Collections.emptySet()).remove(id);
+        }
         nodes.removeIf(n -> n.id == id);
         edges.removeIf(e -> e.sourceId == id || e.targetId == id);
         if (Objects.equals(localRoot, id)) {
@@ -570,12 +585,20 @@ public class BibboApp {
                 try {
                     db.updateNode(id, title, body);
                 } catch (SQLException ex) { ex.printStackTrace(); }
-                nodes.stream().filter(n -> n.id == id).findFirst().ifPresent(n -> {
-                    n.title = title;
-                    n.body  = body;
-                });
-                // BUG FIX: title change may affect reverse edges of other nodes
-                rebuildAllEdges();
+                Node updNode = nodeById.get(id);
+                if (updNode != null) {
+                    String oldTitleNorm = Utils.normalize(updNode.title);
+                    for (String tag : Utils.parseLinks(updNode.body))
+                        tagRefs.getOrDefault(Utils.normalize(tag), Collections.emptySet()).remove(id);
+                    titleIndex.remove(oldTitleNorm);
+                    updNode.title = title;
+                    updNode.body  = body;
+                    String newTitleNorm = Utils.normalize(title);
+                    titleIndex.put(newTitleNorm, id);
+                    for (String tag : Utils.parseLinks(body))
+                        tagRefs.computeIfAbsent(Utils.normalize(tag), k -> new HashSet<>()).add(id);
+                    rebuildAffectedEdges(id, oldTitleNorm, newTitleNorm);
+                }
             }
             editingId = null;
             writing = false;
@@ -601,6 +624,10 @@ public class BibboApp {
             newNode.vx = kx;
             newNode.vy = ky;
             nodes.add(newNode);
+            nodeById.put(id, newNode);
+            titleIndex.put(Utils.normalize(title), id);
+            for (String tag : Utils.parseLinks(body))
+                tagRefs.computeIfAbsent(Utils.normalize(tag), k -> new HashSet<>()).add(id);
             physicsAwake = true;
             rebuildEdgesFor(id, body);
             writing = false;
@@ -635,38 +662,43 @@ public class BibboApp {
         try { db.deleteEdgesFrom(nodeId); } catch (SQLException ex) { ex.printStackTrace(); }
         edges.removeIf(e -> e.sourceId == nodeId);
 
-        String myTitleNorm = nodes.stream()
-            .filter(n -> n.id == nodeId)
-            .findFirst()
-            .map(n -> Utils.normalize(n.title))
-            .orElse("");
+        Node thisNode = nodeById.get(nodeId);
+        if (thisNode == null) return;
+        String myTitleNorm = Utils.normalize(thisNode.title);
         List<String> myTags = Utils.parseLinks(body);
+        Set<Long> connected = new HashSet<>();
 
-        for (Node other : nodes) {
-            if (other.id == nodeId) continue;
-            String theirTitle = Utils.normalize(other.title);
-            List<String> theirTags = Utils.parseLinks(other.body);
-
-            boolean forward = myTags.stream().anyMatch(t -> {
-                String tn = Utils.normalize(t);
-                return tn.equals(theirTitle) || theirTags.stream().anyMatch(tt -> Utils.normalize(tt).equals(tn));
-            });
-            boolean reverse = !myTitleNorm.isEmpty() && (
-                theirTitle.equals(myTitleNorm) ||
-                theirTags.stream().anyMatch(tt -> Utils.normalize(tt).equals(myTitleNorm))
-            );
-
-            if (forward || reverse) {
-                try { db.insertEdge(nodeId, other.id); } catch (SQLException ex) { ex.printStackTrace(); }
-                edges.add(new Edge(nodeId, other.id));
+        // Forward: my tag matches their title, or we share a common tag
+        for (String tag : myTags) {
+            String tn = Utils.normalize(tag);
+            Long tid = titleIndex.get(tn);
+            if (tid != null && tid != nodeId) connected.add(tid);
+            for (Long sid : tagRefs.getOrDefault(tn, Collections.emptySet())) {
+                if (sid != nodeId) connected.add(sid);
             }
+        }
+
+        // Reverse: their tag references my title
+        if (!myTitleNorm.isEmpty()) {
+            for (Long rid : tagRefs.getOrDefault(myTitleNorm, Collections.emptySet())) {
+                if (rid != nodeId) connected.add(rid);
+            }
+        }
+
+        for (Long targetId : connected) {
+            try { db.insertEdge(nodeId, targetId); } catch (SQLException ex) { ex.printStackTrace(); }
+            edges.add(new Edge(nodeId, targetId));
         }
     }
 
-    private void rebuildAllEdges() {
-        // BUG FIX: called when a node title changes so reverse edges stay fresh
-        for (Node n : nodes) {
-            rebuildEdgesFor(n.id, n.body);
+    private void rebuildAffectedEdges(long changedId, String oldTitleNorm, String newTitleNorm) {
+        Set<Long> affected = new HashSet<>();
+        affected.add(changedId);
+        affected.addAll(tagRefs.getOrDefault(oldTitleNorm, Collections.emptySet()));
+        affected.addAll(tagRefs.getOrDefault(newTitleNorm, Collections.emptySet()));
+        for (Long affId : new HashSet<>(affected)) {
+            Node n = nodeById.get(affId);
+            if (n != null) rebuildEdgesFor(affId, n.body);
         }
     }
 
@@ -751,7 +783,12 @@ public class BibboApp {
                 id = db.insertNode(title, body, ci, pos[0], pos[1], Utils.dateString());
             } catch (SQLException e) { continue; }
 
-            nodes.add(new Node(id, title, body, COLORS[ci], pos[0], pos[1]));
+            Node imp = new Node(id, title, body, COLORS[ci], pos[0], pos[1]);
+            nodes.add(imp);
+            nodeById.put(id, imp);
+            titleIndex.put(Utils.normalize(title), id);
+            for (String tag : Utils.parseLinks(body))
+                tagRefs.computeIfAbsent(Utils.normalize(tag), k -> new HashSet<>()).add(id);
             physicsAwake = true;
             newIds.add(id);
             existingTitles.add(Utils.normalize(title));
@@ -778,12 +815,29 @@ public class BibboApp {
             if (idxs.size() > 8) idxs = idxs.subList(0, 8);
             return idxs;
         }
+        // FTS5 path — searches title + body via SQLite index, scales to 100k+ nodes
+        try {
+            List<Long> ftsIds = db.searchFTS(query);
+            if (!ftsIds.isEmpty()) {
+                List<Integer> result = new ArrayList<>();
+                for (Long fid : ftsIds) {
+                    Node n = nodeById.get(fid);
+                    if (n != null) {
+                        int idx = nodes.indexOf(n);
+                        if (idx >= 0) result.add(idx);
+                    }
+                    if (result.size() >= 8) break;
+                }
+                if (!result.isEmpty()) return result;
+            }
+        } catch (SQLException ignored) {}
+        // Fallback: title-only linear scan (no body scan — safe at any node count)
         String q = query.toLowerCase();
         List<int[]> scored = new ArrayList<>();
         for (int i = 0; i < nodes.size(); i++) {
             Node n = nodes.get(i);
             String t = n.title.toLowerCase();
-            int score = t.startsWith(q) ? 3 : t.contains(q) ? 2 : n.body.toLowerCase().contains(q) ? 1 : 0;
+            int score = t.startsWith(q) ? 3 : t.contains(q) ? 2 : 0;
             if (score > 0) scored.add(new int[]{i, score});
         }
         scored.sort((a, b) -> Integer.compare(b[1], a[1]));
@@ -1232,15 +1286,19 @@ public class BibboApp {
         // Edges
         for (Edge e : edges) {
             if (inLocal && (!localVis.contains(e.sourceId) || !localVis.contains(e.targetId))) continue;
-            Node src = nodes.stream().filter(n -> n.id == e.sourceId).findFirst().orElse(null);
-            Node tgt = nodes.stream().filter(n -> n.id == e.targetId).findFirst().orElse(null);
+            Node src = nodeById.get(e.sourceId);
+            Node tgt = nodeById.get(e.targetId);
             if (src == null || tgt == null) continue;
+            double ssx = toScreenX(src.x), ssy = toScreenY(src.y);
+            double tsx = toScreenX(tgt.x), tsy = toScreenY(tgt.y);
+            // Cull edges where both endpoints are off-screen in the same direction
+            if ((ssx < 0 && tsx < 0) || (ssx > w && tsx > w) ||
+                (ssy < 0 && tsy < 0) || (ssy > h && tsy > h)) continue;
             boolean isRootEdge = inLocal && (Objects.equals(localRoot, src.id) || Objects.equals(localRoot, tgt.id));
             int alpha = inLocal ? (isRootEdge ? 80 : 35) : 28;
             gc.setStroke(rgba(210, 210, 225, alpha));
             gc.setLineWidth(isRootEdge ? 1.0 : 0.7);
-            gc.strokeLine(toScreenX(src.x), toScreenY(src.y),
-                          toScreenX(tgt.x), toScreenY(tgt.y));
+            gc.strokeLine(ssx, ssy, tsx, tsy);
         }
 
         // Nodes
@@ -1249,6 +1307,7 @@ public class BibboApp {
             int conns = connCounts.getOrDefault(node.id, 0);
             double r = Utils.nodeRadius(conns) * zoom;
             double sx = toScreenX(node.x), sy = toScreenY(node.y);
+            if (sx + r < 0 || sx - r > w || sy + r < 0 || sy - r > h) continue;
             boolean isRoot = inLocal && Objects.equals(localRoot, node.id);
             int alpha = inLocal ? (isRoot ? 255 : 190) : 210;
 

@@ -35,3 +35,10 @@ jar {
         attributes 'Main-Class': 'com.bibbo.Main'
     }
 }
+
+task seedTest(type: JavaExec, dependsOn: classes) {
+    group = 'development'
+    description = 'Insert 100k test nodes into bibbo_stress.db (does not touch your real database)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.bibbo.SeedTool'
+}

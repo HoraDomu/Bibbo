@@ -8,120 +8,59 @@
 
 A native desktop knowledge graph. Write nodes. Connections emerge.
 
-**[horadomu.github.io/BibboPage](https://horadomu.github.io/BibboPage)** &nbsp;·&nbsp; Built by [HoraDomu](https://github.com/HoraDomu)
+**[horadomu.github.io/BibboPage](https://horadomu.github.io/BibboPage)** &nbsp;·&nbsp; Private beta &nbsp;·&nbsp; Built by [HoraDomu](https://github.com/HoraDomu)
 
 </div>
 
 ---
 
-## What it is
+## Stack
 
-Bibbo is a native desktop app that maps the way your brain actually works. No folders. No hierarchy. One graph. You write nodes, link them with `[[Title]]`, and your understanding takes shape on its own.
-
-Every design decision — the physics simulation, the local graph view, the writing mode, Living Connections — exists to answer one question: *does this help you think more clearly?*
+| Layer | Tech |
+|---|---|
+| Language | Java 21 |
+| UI | JavaFX 21 (Canvas-based rendering) |
+| Database | SQLite via sqlite-jdbc 3.45.3.0 |
+| Full-text search | SQLite FTS5 |
+| Physics | Barnes-Hut O(n log n) quad-tree |
+| Distribution | jpackage native installer (JVM bundled) |
+| Build | Gradle 8.14 + Gradle wrapper |
 
 ---
 
-## Why this works
+## Build
 
-Your brain doesn't store knowledge in lists — it stores it in **connections**. When you link two ideas together you're not just filing them away, you're making a claim about *why* they relate. The more paths that lead to a concept, the deeper your understanding of it becomes.
+```bash
+# Requires Java 21
+./gradlew run          # run locally
+./gradlew installDist  # build distribution
+```
 
-Most note-taking tools fight this. Folders create silos. Lists hide relationships. Bullet points flatten what is inherently dimensional.
+Windows: use `gradlew.bat` instead of `./gradlew`.
 
-Bibbo forces you to answer *"what does this connect to?"* instead of *"where does this go?"* — and that difference compounds over time.
-
----
-
-## Features
-
-**Living Connections**
-Click any edge and see exactly why two nodes are connected — which ideas reference them together, how recently, how strongly. Not just that they're linked. Why.
-
-**Physics-based graph**
-Nodes repel, spring toward their connections, and settle into organic arrangements. Drag one and the whole network shifts. The layout emerges from your thinking, not from a grid.
-
-**Local graph navigation**
-Click a node to enter a focused view of just it and its neighbors. Click a neighbor to expand. Navigate your knowledge by following connections.
-
-**Temporal salience**
-Recently edited nodes glow brighter. Old nodes fade. The graph is a live picture of what's active in your mind, not a flat archive.
-
-**Node weight**
-Size grows with incoming references. The concepts your thinking keeps returning to become visually prominent automatically.
-
-**One global graph**
-No vaults. No workspaces. No decisions about where to put things. Everything lives in one graph. Structure emerges from connections.
+Releasing: push a `v*` tag → GitHub Actions builds `.msi`, `.dmg` (arm64 + intel), `.deb`.
 
 ---
 
-## Keybinds
+## Structure
 
-**Writing**
-
-| Key | Action |
-|---|---|
-| `Ctrl + N` | New node |
-| `[[Title]]` | Link to another node |
-| `Esc` | Save and return to graph |
-
-**Graph**
-
-| Key | Action |
-|---|---|
-| Click node | Enter local view |
-| Click node again | Open writing mode |
-| Click neighbor | Expand the web |
-| Click edge | Living Connections — see why they're linked |
-| Scroll | Zoom |
-| Drag | Pan canvas |
-| Drag node | Move node |
-
-**Navigate**
-
-| Key | Action |
-|---|---|
-| `Ctrl + K` | Search nodes |
-| `Esc` | Back / close panel |
-
-**Data**
-
-| Key | Action |
-|---|---|
-| `Ctrl + E` | Export all nodes to `.md` files |
-| `Ctrl + I` | Import a folder of `.md` files |
-| `Ctrl + H` | Help and keybinds |
-
----
-
-## Installation
-
-Bibbo ships as a native installer with the Java runtime bundled — no Java required on the user's machine.
-
-### Windows
-1. Download `bibbo-windows.msi` from the [latest release](../../releases/latest)
-2. Double-click to install, follow the prompts
-3. Launch Bibbo from the Start Menu
-
-*If Windows Defender shows a warning: More info → Run anyway*
-
-### macOS — Apple Silicon (M1 / M2 / M3 / M4)
-1. Download `bibbo-mac-arm64.dmg` from the [latest release](../../releases/latest)
-2. Open the DMG, drag Bibbo to Applications
-3. First launch: right-click → **Open** → **Open** (one-time Gatekeeper bypass)
-
-### macOS — Intel
-Same as above, download `bibbo-mac-intel.dmg`
-
-### Linux
-1. Download `bibbo-linux.deb` from the [latest release](../../releases/latest)
-2. `sudo dpkg -i bibbo-linux.deb`
-3. Launch from your app menu or run `bibbo`
+```
+src/main/java/com/bibbo/
+  BibboApp.java          # main app — rendering, physics, input, writing mode
+  Main.java              # JavaFX entry point
+  db/Database.java       # SQLite — CRUD, FTS5 index, edge persistence
+  model/Node.java        # node data class
+  model/Edge.java        # edge data class
+  util/QuadTree.java     # Barnes-Hut quad-tree for physics
+  util/Utils.java        # normalize, parseLinks, nodeRadius, dataDir, etc.
+src/main/resources/com/bibbo/
+  app.css                # writing overlay dark styles
+  logo.svg
+```
 
 ---
 
 ## Data
-
-Your data is local. Always. No cloud, no account, no sync.
 
 | Platform | Location |
 |---|---|
@@ -129,13 +68,24 @@ Your data is local. Always. No cloud, no account, no sync.
 | macOS | `~/Library/Application Support/Bibbo/bibbo.db` |
 | Linux | `~/.local/share/Bibbo/bibbo.db` |
 
+Single SQLite file. No cloud, no sync, no account.
+
 ---
 
-## Stack
+## Keybinds
 
-Java 21 · JavaFX 21 · SQLite · jpackage
-
-Native installer per platform. JVM bundled. Single local database. No network calls.
+| Key | Action |
+|---|---|
+| `Ctrl+N` | New node |
+| `[[Title]]` | Link to another node |
+| `Esc` | Save and return |
+| Click node | Enter local view |
+| Click node again | Open writing mode |
+| Click edge | Living Connections — see why they're linked |
+| Scroll | Zoom |
+| `Ctrl+K` | Search |
+| `Ctrl+E` | Export to `.md` |
+| `Ctrl+I` | Import `.md` folder |
 
 ---
 

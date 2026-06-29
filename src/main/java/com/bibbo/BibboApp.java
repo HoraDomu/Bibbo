@@ -3,6 +3,7 @@ package com.bibbo;
 import com.bibbo.db.Database;
 import com.bibbo.model.Edge;
 import com.bibbo.model.Node;
+import com.bibbo.util.QuadTree;
 import com.bibbo.util.Utils;
 import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
@@ -89,6 +90,9 @@ public class BibboApp {
     private boolean searchOpen;
     private int searchSel;
     private final List<Integer> currentSearchResults = new ArrayList<>();
+
+    // ── Physics sleep ─────────────────────────────────────────────────────────
+    private boolean physicsAwake = true;
 
     // ── Misc ──────────────────────────────────────────────────────────────────
     private int colorIdx;
@@ -597,6 +601,7 @@ public class BibboApp {
             newNode.vx = kx;
             newNode.vy = ky;
             nodes.add(newNode);
+            physicsAwake = true;
             rebuildEdgesFor(id, body);
             writing = false;
             showWriting(false);
@@ -747,6 +752,7 @@ public class BibboApp {
             } catch (SQLException e) { continue; }
 
             nodes.add(new Node(id, title, body, COLORS[ci], pos[0], pos[1]));
+            physicsAwake = true;
             newIds.add(id);
             existingTitles.add(Utils.normalize(title));
             imported++;
@@ -1030,42 +1036,38 @@ public class BibboApp {
         int n = nodes.size();
         double[] fx = new double[n], fy = new double[n];
 
-        for (int i = 0; i < n; i++) {
-            for (int j = i + 1; j < n; j++) {
-                double dx = nodes.get(i).x - nodes.get(j).x;
-                double dy = nodes.get(i).y - nodes.get(j).y;
-                double dist = Math.sqrt(dx*dx + dy*dy);
-                if (dist < MIN_DIST && dist > 0.5) {
-                    double t = 1.0 - dist / MIN_DIST;
-                    double f = REPULSION * t * t;
-                    double ux = dx / dist, uy = dy / dist;
-                    fx[i] += ux * f; fy[i] += uy * f;
-                    fx[j] -= ux * f; fy[j] -= uy * f;
+        if (physicsAwake) {
+            // Barnes-Hut O(n log n) repulsion
+            QuadTree tree = QuadTree.build(nodes);
+            if (tree != null) {
+                for (int i = 0; i < n; i++) {
+                    tree.force(nodes.get(i), REPULSION, MIN_DIST, fx, fy, i);
                 }
             }
         }
 
-        Map<Long, Integer> idToIdx = new HashMap<>();
-        for (int i = 0; i < n; i++) idToIdx.put(nodes.get(i).id, i);
+        if (physicsAwake) {
+            Map<Long, Integer> idToIdx = new HashMap<>();
+            for (int i = 0; i < n; i++) idToIdx.put(nodes.get(i).id, i);
 
-        for (Edge e : edges) {
-            Integer ii = idToIdx.get(e.sourceId), jj = idToIdx.get(e.targetId);
-            if (ii == null || jj == null) continue;
-            double dx = nodes.get(jj).x - nodes.get(ii).x;
-            double dy = nodes.get(jj).y - nodes.get(ii).y;
-            double dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist < 0.5) continue;
-            double rest = Utils.edgeRestLen(e.sourceId, e.targetId);
-            double disp = dist - rest;
-            if (Math.abs(disp) < SPRING_DEAD) continue;
-            double f = SPRING_K * disp;
-            double ux = dx / dist, uy = dy / dist;
-            fx[ii] += ux * f; fy[ii] += uy * f;
-            fx[jj] -= ux * f; fy[jj] -= uy * f;
+            for (Edge e : edges) {
+                Integer ii = idToIdx.get(e.sourceId), jj = idToIdx.get(e.targetId);
+                if (ii == null || jj == null) continue;
+                double dx = nodes.get(jj).x - nodes.get(ii).x;
+                double dy = nodes.get(jj).y - nodes.get(ii).y;
+                double dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < 0.5) continue;
+                double rest = Utils.edgeRestLen(e.sourceId, e.targetId);
+                double disp = dist - rest;
+                if (Math.abs(disp) < SPRING_DEAD) continue;
+                double f = SPRING_K * disp;
+                double ux = dx / dist, uy = dy / dist;
+                fx[ii] += ux * f; fy[ii] += uy * f;
+                fx[jj] -= ux * f; fy[jj] -= uy * f;
+            }
         }
 
         double damp = Math.exp(-DAMPING * dt);
-        // BUG FIX: collect ALL settled dirty nodes, not just the last one
         List<long[]> toSave = new ArrayList<>();
         boolean anyActive = false;
 
@@ -1090,6 +1092,7 @@ public class BibboApp {
         for (long[] entry : toSave) {
             savePosition(entry[0], Double.longBitsToDouble(entry[1]), Double.longBitsToDouble(entry[2]));
         }
+        physicsAwake = anyActive;
 
         // Toast tick
         if (toastTimer > 0) toastTimer -= dt;

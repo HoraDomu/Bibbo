@@ -10,7 +10,7 @@ permissions:
 
 jobs:
 
-  # ── Create the release with full instructions ──────────────────────
+  # ── Create the release ────────────────────────────────────────────────
   create-release:
     runs-on: ubuntu-latest
     steps:
@@ -24,122 +24,150 @@ jobs:
 
             A native desktop knowledge graph. Write nodes. Connections emerge.
 
+            **No Java required** — the runtime is bundled in the installer.
+
             ---
 
             ### Windows
 
-            1. Download **`bibbo-windows.exe`** below
-            2. Double-click to run — no installation needed
-            3. If Windows Defender shows a warning, click **More info → Run anyway**
+            1. Download **`bibbo-windows.msi`** below
+            2. Double-click to install — follow the prompts
+            3. Launch Bibbo from the Start Menu
+
+            If Windows Defender shows a warning, click **More info → Run anyway**
 
             ---
 
-            ### Mac — Apple Silicon (M1 / M2 / M3)
+            ### Mac — Apple Silicon (M1 / M2 / M3 / M4)
 
-            1. Download **`bibbo-mac-arm64`** below
-            2. Right-click the file in Finder → **Open** → **Open**
-               *(required the first time to bypass Gatekeeper)*
-            3. If still blocked: **System Settings → Privacy & Security → Open Anyway**
-
-            Or via Terminal:
-            ```
-            chmod +x ~/Downloads/bibbo-mac-arm64
-            ~/Downloads/bibbo-mac-arm64
-            ```
+            1. Download **`bibbo-mac-arm64.dmg`** below
+            2. Open the DMG, drag Bibbo to Applications
+            3. First launch: right-click → **Open** → **Open** to bypass Gatekeeper
 
             ---
 
             ### Mac — Intel
 
-            Same steps as above but download **`bibbo-mac-intel`** instead.
-
-            ```
-            chmod +x ~/Downloads/bibbo-mac-intel
-            ~/Downloads/bibbo-mac-intel
-            ```
+            1. Download **`bibbo-mac-intel.dmg`** below
+            2. Open the DMG, drag Bibbo to Applications
+            3. First launch: right-click → **Open** → **Open** to bypass Gatekeeper
 
             ---
 
             ### Linux
 
-            1. Download **`bibbo-linux`** below
-            2. Open a terminal and run:
-            ```
-            chmod +x ~/Downloads/bibbo-linux
-            ~/Downloads/bibbo-linux
-            ```
+            1. Download **`bibbo-linux.deb`** below
+            2. Install: `sudo dpkg -i bibbo-linux.deb`
+            3. Launch from your app menu or run `bibbo`
 
             ---
 
-            **Not sure which Mac you have?** Click the Apple menu → About This Mac.
-            If it says Apple M1 / M2 / M3 → download `bibbo-mac-arm64`.
-            If it says Intel → download `bibbo-mac-intel`.
+            **Not sure which Mac you have?** Apple menu → About This Mac.
+            M1/M2/M3/M4 → download `arm64`. Intel → download `intel`.
 
             ---
 
             Your data is stored locally on your machine. No cloud, no account needed.
 
-  # ── Build all platforms and attach to the release ─────────────────
+  # ── Build all platforms ───────────────────────────────────────────────
   build:
     needs: create-release
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            artifact: target/release/bibbo.exe
-            asset: bibbo-windows.exe
+            asset: bibbo-windows.msi
 
           - os: macos-latest
-            artifact: target/release/bibbo
-            asset: bibbo-mac-arm64
+            asset: bibbo-mac-arm64.dmg
 
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: target/x86_64-apple-darwin/release/bibbo
-            asset: bibbo-mac-intel
+          - os: macos-13
+            asset: bibbo-mac-intel.dmg
 
           - os: ubuntu-latest
-            artifact: target/release/bibbo
-            asset: bibbo-linux
+            asset: bibbo-linux.deb
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Java + JavaFX (Liberica Full JDK)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'liberica'
+          java-package: 'jdk+fx'
 
-      - name: Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libxrandr-dev \
-            libxi-dev \
-            libx11-dev \
-            libgl1-mesa-dev \
-            pkg-config
+      - name: Make gradlew executable
+        if: runner.os != 'Windows'
+        run: chmod +x gradlew
 
-      - name: Add cross-compile target
-        if: matrix.target
-        run: rustup target add ${{ matrix.target }}
+      - name: Build distribution
+        shell: bash
+        run: ./gradlew installDist
 
-      - name: Build
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
         shell: bash
         run: |
-          if [ -n "${{ matrix.target }}" ]; then
-            cargo build --release --bin bibbo --target ${{ matrix.target }}
-          else
-            cargo build --release --bin bibbo
-          fi
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          "$JAVA_HOME/bin/jpackage" \
+            --input build/install/bibbo/lib \
+            --main-jar bibbo-0.6.0.jar \
+            --main-class com.bibbo.Main \
+            --name Bibbo \
+            --app-version "$VERSION" \
+            --type msi \
+            --dest build/dist \
+            --win-dir-chooser \
+            --win-shortcut \
+            --win-menu
 
-      - name: Stage artifact
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
         shell: bash
-        run: cp ${{ matrix.artifact }} ${{ matrix.asset }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          "$JAVA_HOME/bin/jpackage" \
+            --input build/install/bibbo/lib \
+            --main-jar bibbo-0.6.0.jar \
+            --main-class com.bibbo.Main \
+            --name Bibbo \
+            --app-version "$VERSION" \
+            --type dmg \
+            --dest build/dist
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          "$JAVA_HOME/bin/jpackage" \
+            --input build/install/bibbo/lib \
+            --main-jar bibbo-0.6.0.jar \
+            --main-class com.bibbo.Main \
+            --name Bibbo \
+            --app-version "$VERSION" \
+            --type deb \
+            --dest build/dist \
+            --linux-shortcut
+
+      - name: Rename artifact
+        shell: bash
+        run: |
+          cd build/dist
+          # jpackage names it "Bibbo-<version>.*" — rename to our asset name
+          for f in Bibbo-*; do
+            ext="${f##*.}"
+            cp "$f" "${{ matrix.asset }}"
+          done
 
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset }}
+          files: build/dist/${{ matrix.asset }}

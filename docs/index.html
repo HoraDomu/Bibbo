@@ -490,7 +490,7 @@
 
     <div class="waitlist-wrap">
       <form class="waitlist-form" id="form1" onsubmit="join(event,'form1','done1','email1')">
-        <input type="email" id="email1" placeholder="your@email.com" required />
+        <input type="email" id="email1" name="email" placeholder="your@email.com" required />
         <button type="submit">Request early access</button>
       </form>
       <p class="waitlist-note">Private beta is limited. No spam, ever.</p>
@@ -614,7 +614,7 @@
 
     <div class="waitlist-wrap">
       <form class="waitlist-form" id="form2" onsubmit="join(event,'form2','done2','email2')">
-        <input type="email" id="email2" placeholder="your@email.com" required />
+        <input type="email" id="email2" name="email" placeholder="your@email.com" required />
         <button type="submit">Join the waitlist</button>
       </form>
       <p class="waitlist-note">No spam. You'll hear from us when we're ready.</p>
@@ -695,11 +695,29 @@
 
     function join(e, formId, doneId, emailId) {
       e.preventDefault();
-      const email = encodeURIComponent(document.getElementById(emailId).value);
-      window.location.href =
-        'mailto:dommcpro@gmail.com?subject=Bibbo%20Waitlist&body=Please%20add%20me%20to%20the%20Bibbo%20waitlist%3A%20' + email;
-      document.getElementById(doneId).style.display = 'block';
-      document.getElementById(formId).style.display = 'none';
+      const form  = document.getElementById(formId);
+      const btn   = form.querySelector('button');
+      const email = document.getElementById(emailId).value;
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      fetch('https://formspree.io/f/mlgywery', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      })
+      .then(r => {
+        if (r.ok) {
+          form.style.display = 'none';
+          document.getElementById(doneId).style.display = 'block';
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Try again';
+        }
+      })
+      .catch(() => {
+        btn.disabled = false;
+        btn.textContent = 'Try again';
+      });
     }
   </script>
 
